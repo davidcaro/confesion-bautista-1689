@@ -345,3 +345,12 @@ button, input { font: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+.tooltip-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
+.tooltip-header > div:first-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tooltip-version-pills { display: flex; gap: 3px; background: rgba(255, 255, 255, 0.08); padding: 3px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.07); flex-shrink: 0; }
+.version-pill { border: none; background: transparent; color: #a9b5cf; font: 600 10px var(--font-mono), monospace; padding: 3px 6px; border-radius: 5px; cursor: pointer; transition: background .15s ease, color .15s ease; outline: none; }
+.version-pill:hover { background: rgba(255, 255, 255, 0.15); color: #ffffff; }
+.version-pill:focus-visible { outline: 2px solid var(--primary); }
+.version-pill.is-active { background: #264fd5; color: #ffffff; font-weight: 700; box-shadow: 0 2px 5px rgba(0,0,0,.2); }
+.theme-dark .version-pill.is-active { background: #4770ff; color: #ffffff; }

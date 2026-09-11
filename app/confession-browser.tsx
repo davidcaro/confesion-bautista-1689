@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import chapters from "./data/confession.json";
 import { ReflectionPanel, StudyNotesPanel } from "./study-panels";
+import { BIBLE_VERSIONS, BIBLE_VERSION_KEYS, type BibleVersionKey } from "@/lib/bible-versions";
 
 type Chapter = (typeof chapters)[number];
 type Section = { text: string; references: string[] };
@@ -33,7 +34,7 @@ function toSections(chapter: Chapter): Section[] {
   return sections;
 }
 
-function bibleGatewayUrl(reference: string) {
+function bibleGatewayUrl(reference: string, version: BibleVersionKey = "RVR1960") {
   const linkReference = reference
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -42,7 +43,7 @@ function bibleGatewayUrl(reference: string) {
     .replace(/\s+/g, " ")
     .trim();
 
-  return `https://www.biblegateway.com/passage/?search=${encodeURIComponent(linkReference)}&version=NBLA`;
+  return `https://www.biblegateway.com/passage/?search=${encodeURIComponent(linkReference)}&version=${version}`;
 }
 
 function splitReferences(groups: string[]) {
@@ -114,47 +115,105 @@ function renderParagraph(text: string, referencePrefix: string, groupNumbers: st
 }
 
 type PassageState =
-  | { status: "idle" | "loading"; text?: undefined }
-  | { status: "ready"; text: string }
-  | { status: "error"; text?: undefined };
+  | { status: "idle" | "loading"; text?: undefined; copyright?: string }
+  | { status: "ready"; text: string; copyright?: string }
+  | { status: "error"; text?: undefined; copyright?: string };
 
-function BibleReference({ reference }: { reference: string }) {
-  const [passage, setPassage] = useState<PassageState>({ status: "idle" });
+function BibleReference({
+  reference,
+  activeGlobalVersion,
+  onGlobalVersionChange,
+}: {
+  reference: string;
+  activeGlobalVersion: BibleVersionKey;
+  onGlobalVersionChange: (version: BibleVersionKey) => void;
+}) {
+  const [currentVersion, setCurrentVersion] = useState<BibleVersionKey>(activeGlobalVersion);
+  const [passages, setPassages] = useState<Partial<Record<BibleVersionKey, PassageState>>>({});
 
-  const loadPassage = async () => {
-    if (passage.status !== "idle") return;
-    setPassage({ status: "loading" });
+  useEffect(() => {
+    setCurrentVersion(activeGlobalVersion);
+  }, [activeGlobalVersion]);
+
+  const loadPassage = async (versionToLoad = currentVersion) => {
+    const existing = passages[versionToLoad];
+    if (existing?.status === "loading" || existing?.status === "ready") return;
+
+    setPassages((prev) => ({ ...prev, [versionToLoad]: { status: "loading" } }));
     try {
-      const response = await fetch(`/api/bible?ref=${encodeURIComponent(reference)}&format=3`);
+      const response = await fetch(
+        `/api/bible?ref=${encodeURIComponent(reference)}&version=${versionToLoad}&format=3`,
+      );
       if (!response.ok) throw new Error("Passage unavailable");
-      const data = (await response.json()) as { text: string };
-      setPassage({ status: "ready", text: data.text });
+      const data = (await response.json()) as { text: string; copyright?: string };
+      setPassages((prev) => ({
+        ...prev,
+        [versionToLoad]: { status: "ready", text: data.text, copyright: data.copyright },
+      }));
     } catch {
-      setPassage({ status: "error" });
+      setPassages((prev) => ({ ...prev, [versionToLoad]: { status: "error" } }));
     }
   };
+
+  const handleVersionClick = (v: BibleVersionKey) => {
+    setCurrentVersion(v);
+    onGlobalVersionChange(v);
+    loadPassage(v);
+  };
+
+  const currentPassage = passages[currentVersion] ?? { status: "idle" };
+  const versionMeta = BIBLE_VERSIONS[currentVersion] ?? BIBLE_VERSIONS.RVR1960;
 
   return (
     <span
       className="scripture-tooltip"
       tabIndex={0}
-      onMouseEnter={loadPassage}
-      onFocus={loadPassage}
+      onMouseEnter={() => loadPassage(currentVersion)}
+      onFocus={() => loadPassage(currentVersion)}
     >
       <span className="reference-chip">{reference}</span>
       <span className="tooltip-card" role="tooltip">
-        <span className="tooltip-kicker">Nueva Biblia de las Américas</span>
-        <strong>{reference}</strong>
-        {passage.status === "idle" || passage.status === "loading" ? (
-          <span className="tooltip-loading"><LoaderCircle /> Cargando texto NBLA…</span>
-        ) : passage.status === "ready" ? (
-          <span className="tooltip-passage">{passage.text}</span>
+        <div className="tooltip-header">
+          <div>
+            <span className="tooltip-kicker">{versionMeta.name}</span>
+            <strong>{reference}</strong>
+          </div>
+          <div className="tooltip-version-pills" role="tablist" aria-label="Versión de la Biblia">
+            {BIBLE_VERSION_KEYS.map((v) => (
+              <button
+                key={v}
+                type="button"
+                role="tab"
+                aria-selected={currentVersion === v}
+                className={`version-pill ${currentVersion === v ? "is-active" : ""}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleVersionClick(v);
+                }}
+              >
+                {BIBLE_VERSIONS[v].shortName}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {currentPassage.status === "idle" || currentPassage.status === "loading" ? (
+          <span className="tooltip-loading">
+            <LoaderCircle /> Cargando texto {versionMeta.shortName}…
+          </span>
+        ) : currentPassage.status === "ready" ? (
+          <span className="tooltip-passage">{currentPassage.text}</span>
         ) : (
           <span>No fue posible cargar el texto en este momento.</span>
         )}
-        <span className="tooltip-copyright">NBLA © The Lockman Foundation · vía Bible Gateway</span>
-        <a href={bibleGatewayUrl(reference)} target="_blank" rel="noreferrer">
-          Abrir pasaje completo <ExternalLink />
+
+        <span className="tooltip-copyright">
+          {currentPassage.status === "ready" && currentPassage.copyright
+            ? currentPassage.copyright
+            : versionMeta.copyright}
+        </span>
+        <a href={bibleGatewayUrl(reference, currentVersion)} target="_blank" rel="noreferrer">
+          Abrir pasaje completo en Bible Gateway <ExternalLink />
         </a>
       </span>
     </span>
@@ -169,6 +228,7 @@ export default function ConfessionBrowser() {
   const [fontPreference, setFontPreference] = useState<FontPreference>("sans");
   const [textSize, setTextSize] = useState<TextSize>("medium");
   const [colorTheme, setColorTheme] = useState<ColorTheme>("light");
+  const [bibleVersion, setBibleVersion] = useState<BibleVersionKey>("RVR1960");
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [noteTarget, setNoteTarget] = useState<{ chapter: number; section: number } | null>(null);
   const [reflectionOpen, setReflectionOpen] = useState(false);
@@ -179,10 +239,14 @@ export default function ConfessionBrowser() {
         font?: FontPreference;
         size?: TextSize;
         theme?: ColorTheme;
+        bibleVersion?: BibleVersionKey;
       };
       if (saved.font === "sans" || saved.font === "serif") setFontPreference(saved.font);
       if (textSizes.includes(saved.size as TextSize)) setTextSize(saved.size as TextSize);
       if (saved.theme === "light" || saved.theme === "dark") setColorTheme(saved.theme);
+      if (saved.bibleVersion && BIBLE_VERSION_KEYS.includes(saved.bibleVersion)) {
+        setBibleVersion(saved.bibleVersion);
+      }
     } catch {
       // Keep the reading defaults when stored preferences are invalid.
     }
@@ -191,8 +255,11 @@ export default function ConfessionBrowser() {
 
   useEffect(() => {
     if (!preferencesReady) return;
-    localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ font: fontPreference, size: textSize, theme: colorTheme }));
-  }, [colorTheme, fontPreference, preferencesReady, textSize]);
+    localStorage.setItem(
+      PREFERENCES_KEY,
+      JSON.stringify({ font: fontPreference, size: textSize, theme: colorTheme, bibleVersion }),
+    );
+  }, [bibleVersion, colorTheme, fontPreference, preferencesReady, textSize]);
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -304,6 +371,22 @@ export default function ConfessionBrowser() {
                     <button aria-pressed={colorTheme === "dark"} className={colorTheme === "dark" ? "is-active" : ""} onClick={() => setColorTheme("dark")}><Moon /> Oscuro</button>
                   </div>
                 </div>
+
+                <div className="setting-row">
+                  <div><strong>Versión bíblica</strong><span>Para consultas y citas</span></div>
+                  <div className="segmented-control" aria-label="Versión bíblica">
+                    {BIBLE_VERSION_KEYS.map((v) => (
+                      <button
+                        key={v}
+                        aria-pressed={bibleVersion === v}
+                        className={bibleVersion === v ? "is-active" : ""}
+                        onClick={() => setBibleVersion(v)}
+                      >
+                        {v} {bibleVersion === v && <Check />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -407,7 +490,12 @@ export default function ConfessionBrowser() {
                           <div className="reference-group-number" aria-label={`Grupo de citas ${group.number}`}>{group.number}</div>
                           <div className="reference-group-citations">
                             {group.citations.map((reference) => (
-                              <BibleReference reference={reference} key={reference} />
+                              <BibleReference
+                                reference={reference}
+                                key={reference}
+                                activeGlobalVersion={bibleVersion}
+                                onGlobalVersionChange={setBibleVersion}
+                              />
                             ))}
                           </div>
                         </div>

@@ -1,4 +1,6 @@
+import https from "node:https";
 import { NextRequest, NextResponse } from "next/server";
+import { BIBLE_VERSIONS, type BibleVersionKey } from "@/lib/bible-versions";
 
 const BOOKS: Record<string, string> = {
   Gn: "Génesis", Ex: "Éxodo", Lv: "Levítico", Nm: "Números", Dt: "Deuteronomio",
@@ -94,15 +96,47 @@ function extractPassage(html: string) {
   return passages.join(" ") || null;
 }
 
+function fetchViaHttps(url: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    https
+      .get(
+        url,
+        {
+          headers: {
+            "User-Agent": "Mozilla/5.0",
+            "Accept-Language": "es-ES,es;q=0.9",
+          },
+          rejectUnauthorized: false,
+          timeout: 12000,
+        },
+        (res) => {
+          if (res.statusCode && res.statusCode >= 400) {
+            reject(new Error(`Bible Gateway HTTP ${res.statusCode}`));
+            return;
+          }
+          let body = "";
+          res.setEncoding("utf8");
+          res.on("data", (chunk) => (body += chunk));
+          res.on("end", () => resolve(body));
+        },
+      )
+      .on("error", reject);
+  });
+}
+
 export async function GET(request: NextRequest) {
   const reference = request.nextUrl.searchParams.get("ref")?.trim() ?? "";
   if (!reference || reference.length > 120 || !/\d+:\d/.test(reference)) {
     return NextResponse.json({ error: "Referencia inválida" }, { status: 400 });
   }
 
-  const search = normalizeSearch(reference);
-  const url = `https://www.biblegateway.com/passage/?search=${encodeURIComponent(search)}&version=NBLA&interface=print`;
+  const requestedVersion = (request.nextUrl.searchParams.get("version")?.trim().toUpperCase() ?? "RVR1960") as BibleVersionKey;
+  const versionInfo = BIBLE_VERSIONS[requestedVersion] ?? BIBLE_VERSIONS.RVR1960;
 
+  const search = normalizeSearch(reference);
+  const url = `https://www.biblegateway.com/passage/?search=${encodeURIComponent(search)}&version=${versionInfo.code}&interface=print`;
+
+  let html = "";
   try {
     const response = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0", "Accept-Language": "es-ES,es;q=0.9" },
@@ -110,14 +144,28 @@ export async function GET(request: NextRequest) {
       signal: AbortSignal.timeout(12000),
     });
     if (!response.ok) throw new Error(`Bible Gateway ${response.status}`);
-    const text = extractPassage(await response.text());
-    if (!text) return NextResponse.json({ error: "Texto no encontrado" }, { status: 404 });
-
-    return NextResponse.json(
-      { reference, normalizedReference: search, text, sourceUrl: url },
-      { headers: { "Cache-Control": "public, max-age=86400, s-maxage=86400" } },
-    );
+    html = await response.text();
   } catch {
-    return NextResponse.json({ error: "No disponible" }, { status: 502 });
+    try {
+      html = await fetchViaHttps(url);
+    } catch {
+      return NextResponse.json({ error: "No disponible" }, { status: 502 });
+    }
   }
+
+  const text = extractPassage(html);
+  if (!text) return NextResponse.json({ error: "Texto no encontrado" }, { status: 404 });
+
+  return NextResponse.json(
+    {
+      reference,
+      normalizedReference: search,
+      version: versionInfo.code,
+      versionName: versionInfo.name,
+      copyright: versionInfo.copyright,
+      text,
+      sourceUrl: url,
+    },
+    { headers: { "Cache-Control": "public, max-age=86400, s-maxage=86400" } },
+  );
 }
