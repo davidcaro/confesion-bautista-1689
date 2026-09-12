@@ -12,7 +12,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: { default: "Confesión Bautista de 1689", template: "%s · 1689" },
     description: "Una edición digital, navegable y organizada de la Confesión Bautista de Fe de 1689.",
-    icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
+    icons: { icon: "/favicon.svg", apple: "/favicon.png", shortcut: "/favicon.svg" },
     openGraph: {
       title: "Confesión Bautista de 1689",
       description: "32 capítulos · lectura y búsqueda",
